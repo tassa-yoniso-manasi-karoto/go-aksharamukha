@@ -19,7 +19,7 @@ Go bindings for [Aksharamukha](https://github.com/virtualvinodh/aksharamukha), a
 import (
 	"fmt"
 	"log"
-	ak "github.com/your-username/aksharamukha-go"
+	ak "github.com/tassa-yoniso-manasi-karoto/go-aksharamukha"
 )
 
 func main() {
