@@ -42,7 +42,7 @@ const (
 	Hanunoo         Script = "Hanunoo"
 	Hatr            Script = "Hatr"
 	Hebrew          Script = "Hebrew"
-	HebrAr          Script = "HebrAr"
+	HebrAr          Script = "Hebr-Ar"
 	Armi            Script = "Armi"
 	Phli            Script = "Phli"
 	Prti            Script = "Prti"
