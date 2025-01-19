@@ -8,7 +8,7 @@ Go bindings for [Aksharamukha](https://github.com/virtualvinodh/aksharamukha), a
 - Romanization of text using ISO/academic standards
 - Support for various Indic, Southeast Asian, and Middle Eastern scripts
 - Docker-based deployment
-- Script autoselection from language romanization
+- Script autoselection for language romanization
 - Customizable transliteration options
 
 **<p align="center"> ⚠️ While many scripts are supported I would not recommend using Aksharamukha for anything but romanization of indic languages or transliteration between indic languages. ⚠️ </p>**
