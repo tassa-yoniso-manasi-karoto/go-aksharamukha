@@ -30,14 +30,15 @@ func main() {
 
 	// Simple transliteration
 	text := "नमस्ते"
-	result, err := ak.TransliterateSimple(text, ak.Devanagari, ak.Tamil)
+	result, err := ak.TranslitSimple(text, ak.Devanagari, ak.Tamil)
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println(result)
 
-	// Romanization from a ISO-639 language code
-	result, err = ak.Romanize("नमस्ते", "hin")
+	// Romanization from a ISO-639 language code, in this example, to the ISO 15919 romanization scheme
+	// the default romanization scheme per language if available in static.go
+	result, err = ak.Roman("नमस्ते", "hin")
 	if err != nil {
 		log.Fatal(err)
 	}

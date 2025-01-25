@@ -43,7 +43,7 @@ func NewDocker() (*Docker, error) {
 			Prefix:      projectName,
 			ShowService: true,
 			ShowType:    true,
-			LogLevel:    zerolog.InfoLevel,
+			LogLevel:    zerolog.Disabled, //InfoLevel
 			InitMessage: "Listening at: http://0.0.0.0:8085",
 		}
 		

@@ -14,8 +14,8 @@ import (
 	iso "github.com/barbashov/iso639-3"
 )
 
-// TransliterationOptions holds configuration for the transliteration process
-type TransliterationOptions struct {
+// TranslitOptions holds configuration for the transliteration process
+type TranslitOptions struct {
 	// If false, prevents automatic nativization according to output script conventions
 	Nativize bool
 	// Options applied before transliteration
@@ -25,15 +25,15 @@ type TransliterationOptions struct {
 }
 
 // DefaultOptions returns the default transliteration options
-func DefaultOptions() TransliterationOptions {
-	return TransliterationOptions{}
+func DefaultOptions() TranslitOptions {
+	return TranslitOptions{}
 		//Nativize: true,
 	//}
 }
 
 // Transliterate converts text from one script to another
 // Transliterate converts text from one script to another
-func Transliterate(text string, from, to Script, opts TransliterationOptions) (string, error) {
+func Translit(text string, from, to Script, opts TranslitOptions) (string, error) {
 	if instance == nil {
 		return "", fmt.Errorf("docker instance not initialized")
 	}
@@ -112,14 +112,14 @@ func Transliterate(text string, from, to Script, opts TransliterationOptions) (s
 	return result, nil
 }
 
-// TransliterateSimple is a convenience function for simple transliteration without options
-func TransliterateSimple(text string, from, to Script) (string, error) {
-	return Transliterate(text, from, to, DefaultOptions())
+// Translitimple is a convenience function for simple transliteration without options
+func TranslitSimple(text string, from, to Script) (string, error) {
+	return Translit(text, from, to, DefaultOptions())
 }
 
 
 // Romanize converts text from a given language to its romanized form
-func Romanize(text, languageCode string) (string, error) {
+func Roman(text, languageCode string) (string, error) {
 	// Validate and standardize the language code
 	stdLang, ok := IsValidISO639(languageCode)
 	if !ok {
@@ -144,8 +144,7 @@ func Romanize(text, languageCode string) (string, error) {
 		return "", fmt.Errorf("no romanization scheme found for script %s", sourceScript)
 	}
 
-	// Use the existing Transliterate function with default options
-	result, err := Transliterate(text, sourceScript, Script(romanScheme), DefaultOptions())
+	result, err := Translit(text, sourceScript, Script(romanScheme), DefaultOptions())
 	if err != nil {
 		return "", fmt.Errorf("romanization failed: %w", err)
 	}
@@ -154,7 +153,7 @@ func Romanize(text, languageCode string) (string, error) {
 }
 
 // RomanizeWithOptions is like Romanize but allows customization of the transliteration options
-func RomanizeWithOptions(text, languageCode string, opts TransliterationOptions) (string, error) {
+func RomanWithOptions(text, languageCode string, opts TranslitOptions) (string, error) {
 	// Validate and standardize the language code
 	stdLang, ok := IsValidISO639(languageCode)
 	if !ok {
@@ -180,7 +179,7 @@ func RomanizeWithOptions(text, languageCode string, opts TransliterationOptions)
 	}
 
 	// Use the existing Transliterate function with provided options
-	result, err := Transliterate(text, sourceScript, Script(romanScheme), opts)
+	result, err := Translit(text, sourceScript, Script(romanScheme), opts)
 	if err != nil {
 		return "", fmt.Errorf("romanization failed: %w", err)
 	}
