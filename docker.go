@@ -22,18 +22,18 @@ const (
 
 var (
 	QueryTO = 1 * time.Hour
-	instance *Docker
+	instance *docker
 	once sync.Once
 	mu sync.Mutex
 )
 
-type Docker struct {
+type docker struct {
 	docker *dockerutil.DockerManager
 	logger *dockerutil.ContainerLogConsumer
 }
 
-// NewDocker creates or returns an existing Docker instance
-func NewDocker() (*Docker, error) {
+// NewDocker creates or returns an existing docker instance
+func newDocker() (*docker, error) {
 	mu.Lock()
 	defer mu.Unlock()
 	
@@ -63,7 +63,7 @@ func NewDocker() (*Docker, error) {
 			return
 		}
 
-		instance = &Docker{
+		instance = &docker{
 			docker: manager,
 			logger: logger,
 		}
@@ -75,10 +75,10 @@ func NewDocker() (*Docker, error) {
 	return instance, nil
 }
 
-// Package-level functions for Docker management
+// Package-level functions for docker management
 func Init() error {
 	if instance == nil {
-		if _, err := NewDocker(); err != nil {
+		if _, err := newDocker(); err != nil {
 			return err
 		}
 	}
@@ -87,7 +87,7 @@ func Init() error {
 
 func InitQuiet() error {
 	if instance == nil {
-		if _, err := NewDocker(); err != nil {
+		if _, err := newDocker(); err != nil {
 			return err
 		}
 	}
@@ -96,7 +96,7 @@ func InitQuiet() error {
 
 func InitForce() error {
 	if instance == nil {
-		if _, err := NewDocker(); err != nil {
+		if _, err := newDocker(); err != nil {
 			return err
 		}
 	}
@@ -105,7 +105,7 @@ func InitForce() error {
 
 func MustInit() {
 	if instance == nil {
-		NewDocker()
+		newDocker()
 	}
 	instance.docker.InitForce()
 }
