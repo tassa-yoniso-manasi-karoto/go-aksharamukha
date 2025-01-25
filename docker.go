@@ -1,9 +1,9 @@
-
 package aksharamukha
 
 import (
 	"time"
 	"sync"
+	"fmt"
 
 	"github.com/rs/zerolog"
 	"github.com/gookit/color"
@@ -15,7 +15,6 @@ import (
 const (
 	remote = "https://github.com/virtualvinodh/aksharamukha.git"
 	projectName = "aksharamukha"
-	// Main containers from the compose file
 	containerFront = "aksharamukha-front-1"
 	containerBack = "aksharamukha-back-1"
 	containerFonts = "aksharamukha-fonts-1"
@@ -23,23 +22,33 @@ const (
 
 var (
 	QueryTO = 1 * time.Hour
-	dockerInstance *dockerutil.DockerManager
-	dockerOnce sync.Once
-	dockerMu sync.Mutex
+	instance *Docker
+	once sync.Once
+	mu sync.Mutex
 )
 
-type Aksharamukha struct {
+type Docker struct {
 	docker *dockerutil.DockerManager
 	logger *dockerutil.ContainerLogConsumer
 }
 
-// NewDocker creates or returns an existing Docker manager instance
-func NewDocker(logger *dockerutil.ContainerLogConsumer) (*dockerutil.DockerManager, error) {
-	dockerMu.Lock()
-	defer dockerMu.Unlock()
-
+// NewDocker creates or returns an existing Docker instance
+func NewDocker() (*Docker, error) {
+	mu.Lock()
+	defer mu.Unlock()
+	
 	var initErr error
-	dockerOnce.Do(func() {
+	once.Do(func() {
+		logConfig := dockerutil.LogConfig{
+			Prefix:      projectName,
+			ShowService: true,
+			ShowType:    true,
+			LogLevel:    zerolog.InfoLevel,
+			InitMessage: "Listening at: http://0.0.0.0:8085",
+		}
+		
+		logger := dockerutil.NewContainerLogConsumer(logConfig)
+
 		cfg := dockerutil.Config{
 			ProjectName:      projectName,
 			ComposeFile:     "docker-compose.yml",
@@ -48,69 +57,79 @@ func NewDocker(logger *dockerutil.ContainerLogConsumer) (*dockerutil.DockerManag
 			LogConsumer:     logger,
 		}
 
-		dockerInstance, initErr = dockerutil.NewDockerManager(cfg)
+		manager, err := dockerutil.NewDockerManager(cfg)
+		if err != nil {
+			initErr = err
+			return
+		}
+
+		instance = &Docker{
+			docker: manager,
+			logger: logger,
+		}
 	})
 
-	return dockerInstance, initErr
-}
-
-// NewAksharamukha creates a new instance of the Aksharamukha service
-func NewAksharamukha() (*Aksharamukha, error) {
-	logConfig := dockerutil.LogConfig{
-		Prefix:      projectName,
-		ShowService: true,
-		ShowType:    true,
-		LogLevel:    zerolog.Disabled,
-		InitMessage: "Listening at: http://0.0.0.0:8085",
+	if initErr != nil {
+		return nil, initErr
 	}
-	
-	logger := dockerutil.NewContainerLogConsumer(logConfig)
+	return instance, nil
+}
 
-	docker, err := NewDocker(logger)
-	if err != nil {
-		return nil, err
+// Package-level functions for Docker management
+func Init() error {
+	if instance == nil {
+		if _, err := NewDocker(); err != nil {
+			return err
+		}
 	}
-
-	return &Aksharamukha{
-		docker: docker,
-		logger: logger,
-	}, nil
+	return instance.docker.Init()
 }
 
-// Init initializes the aksharamukha service
-func (a *Aksharamukha) Init() error {
-	return a.docker.Init()
+func InitQuiet() error {
+	if instance == nil {
+		if _, err := NewDocker(); err != nil {
+			return err
+		}
+	}
+	return instance.docker.InitQuiet()
 }
 
-// InitQuiet initializes the aksharamukha service with reduced logging
-func (a *Aksharamukha) InitQuiet() error {
-	return a.docker.InitQuiet()
+func InitForce() error {
+	if instance == nil {
+		if _, err := NewDocker(); err != nil {
+			return err
+		}
+	}
+	return instance.docker.InitForce()
 }
 
-// InitForce initializes the aksharamukha service with forced rebuild
-func (a *Aksharamukha) InitForce() error {
-	return a.docker.InitForce()
+func MustInit() {
+	if instance == nil {
+		NewDocker()
+	}
+	instance.docker.InitForce()
 }
 
-// Stop stops the aksharamukha service
-func (a *Aksharamukha) Stop() error {
-	return a.docker.Stop()
+
+func Stop() error {
+	if instance == nil {
+		return fmt.Errorf("docker instance not initialized")
+	}
+	return instance.docker.Stop()
 }
 
-// Close implements io.Closer
-func (a *Aksharamukha) Close() error {
-	a.logger.Close()
-	return a.docker.Close()
+func Close() error {
+	if instance != nil {
+		instance.logger.Close()
+		return instance.docker.Close()
+	}
+	return nil
 }
 
-// Status returns the current status of the aksharamukha service
-func (a *Aksharamukha) Status() (string, error) {
-	return a.docker.Status()
-}
-
-// SetLogLevel updates the logging level
-func (a *Aksharamukha) SetLogLevel(level zerolog.Level) {
-	a.logger.SetLogLevel(level)
+func SetLogLevel(level zerolog.Level) {
+	if instance != nil {
+		instance.logger.SetLogLevel(level)
+	}
 }
 
 func placeholder3456543() {

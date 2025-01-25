@@ -33,7 +33,10 @@ func DefaultOptions() TransliterationOptions {
 
 // Transliterate converts text from one script to another
 // Transliterate converts text from one script to another
-func (a *Aksharamukha) Transliterate(text string, from, to Script, opts TransliterationOptions) (string, error) {
+func Transliterate(text string, from, to Script, opts TransliterationOptions) (string, error) {
+	if instance == nil {
+		return "", fmt.Errorf("docker instance not initialized")
+	}
 	if text == "" {
 		return "", fmt.Errorf("empty text provided")
 	}
@@ -110,13 +113,13 @@ func (a *Aksharamukha) Transliterate(text string, from, to Script, opts Translit
 }
 
 // TransliterateSimple is a convenience function for simple transliteration without options
-func (a *Aksharamukha) TransliterateSimple(text string, from, to Script) (string, error) {
-	return a.Transliterate(text, from, to, DefaultOptions())
+func TransliterateSimple(text string, from, to Script) (string, error) {
+	return Transliterate(text, from, to, DefaultOptions())
 }
 
 
 // Romanize converts text from a given language to its romanized form
-func (a *Aksharamukha) Romanize(text, languageCode string) (string, error) {
+func Romanize(text, languageCode string) (string, error) {
 	// Validate and standardize the language code
 	stdLang, ok := IsValidISO639(languageCode)
 	if !ok {
@@ -142,7 +145,7 @@ func (a *Aksharamukha) Romanize(text, languageCode string) (string, error) {
 	}
 
 	// Use the existing Transliterate function with default options
-	result, err := a.Transliterate(text, sourceScript, Script(romanScheme), DefaultOptions())
+	result, err := Transliterate(text, sourceScript, Script(romanScheme), DefaultOptions())
 	if err != nil {
 		return "", fmt.Errorf("romanization failed: %w", err)
 	}
@@ -151,7 +154,7 @@ func (a *Aksharamukha) Romanize(text, languageCode string) (string, error) {
 }
 
 // RomanizeWithOptions is like Romanize but allows customization of the transliteration options
-func (a *Aksharamukha) RomanizeWithOptions(text, languageCode string, opts TransliterationOptions) (string, error) {
+func RomanizeWithOptions(text, languageCode string, opts TransliterationOptions) (string, error) {
 	// Validate and standardize the language code
 	stdLang, ok := IsValidISO639(languageCode)
 	if !ok {
@@ -177,7 +180,7 @@ func (a *Aksharamukha) RomanizeWithOptions(text, languageCode string, opts Trans
 	}
 
 	// Use the existing Transliterate function with provided options
-	result, err := a.Transliterate(text, sourceScript, Script(romanScheme), opts)
+	result, err := Transliterate(text, sourceScript, Script(romanScheme), opts)
 	if err != nil {
 		return "", fmt.Errorf("romanization failed: %w", err)
 	}

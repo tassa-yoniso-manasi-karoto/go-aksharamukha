@@ -23,26 +23,21 @@ import (
 )
 
 func main() {
-	// Initialize the service
-	a, err := ak.NewAksharamukha()
-	if err != nil {
+	if err := ak.Init(); err != nil {
 		log.Fatal(err)
 	}
-	if err := a.Init(); err != nil {
-		log.Fatal(err)
-	}
-	defer a.Close()
+	defer ak.Close()
 
 	// Simple transliteration
 	text := "नमस्ते"
-	result, err := a.TransliterateSimple(text, ak.Devanagari, ak.Tamil)
+	result, err := ak.TransliterateSimple(text, ak.Devanagari, ak.Tamil)
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println(result)
 
 	// Romanization from a ISO-639 language code
-	result, err = a.Romanize("नमस्ते", "hin")
+	result, err = ak.Romanize("नमस्ते", "hin")
 	if err != nil {
 		log.Fatal(err)
 	}
