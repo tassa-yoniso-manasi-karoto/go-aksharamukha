@@ -75,7 +75,7 @@ func newDocker() (*docker, error) {
 	return instance, nil
 }
 
-// Package-level functions for docker management
+// Init initializes the docker service
 func Init() error {
 	if instance == nil {
 		if _, err := newDocker(); err != nil {
@@ -85,6 +85,8 @@ func Init() error {
 	return instance.docker.Init()
 }
 
+
+// InitQuiet initializes the docker service with reduced logging
 func InitQuiet() error {
 	if instance == nil {
 		if _, err := newDocker(); err != nil {
@@ -93,21 +95,25 @@ func InitQuiet() error {
 	}
 	return instance.docker.InitQuiet()
 }
-
-func InitForce() error {
+// InitRecreate remove existing containers (if noCache is true, downloads the lastest
+// version of dependencies ignoring cache), then builds and up the containers
+func InitRecreate(noCache bool) error {
 	if instance == nil {
 		if _, err := newDocker(); err != nil {
 			return err
 		}
 	}
-	return instance.docker.InitForce()
+	if noCache {
+		return instance.docker.InitRecreateNoCache()
+	}
+	return instance.docker.InitRecreate()
 }
 
 func MustInit() {
 	if instance == nil {
 		newDocker()
 	}
-	instance.docker.InitForce()
+	instance.docker.InitRecreate()
 }
 
 
