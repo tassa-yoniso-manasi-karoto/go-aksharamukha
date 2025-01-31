@@ -32,8 +32,11 @@ func DefaultOptions() TranslitOptions {
 }
 
 // Transliterate converts text from one script to another
-// Transliterate converts text from one script to another
-func Translit(text string, from, to Script, opts TranslitOptions) (string, error) {
+func Translit(text string, from, to Script) (string, error) {
+	return TranslitWithOptions(text, from, to, DefaultOptions())
+}
+
+func TranslitWithOptions(text string, from, to Script, opts TranslitOptions) (string, error) {
 	if instance == nil {
 		return "", fmt.Errorf("docker instance not initialized")
 	}
@@ -86,7 +89,7 @@ func Translit(text string, from, to Script, opts TranslitOptions) (string, error
 	// Make the request
 	resp, err := client.Get(fmt.Sprintf("%s?%s", baseURL, params.Encode()))
 	if err != nil {
-		return "", fmt.Errorf("failed to make request: %w", err)
+		return "", fmt.Errorf("failed to make request (THIS ERROR MAY BE CAUSED BY AN ACTIVE VPN): %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -112,65 +115,20 @@ func Translit(text string, from, to Script, opts TranslitOptions) (string, error
 	return result, nil
 }
 
-// Translitimple is a convenience function for simple transliteration without options
-func TranslitSimple(text string, from, to Script) (string, error) {
-	return Translit(text, from, to, DefaultOptions())
-}
 
 
 // Romanize converts text from a given language to its romanized form
 func Roman(text, languageCode string) (string, error) {
-	// Validate and standardize the language code
-	stdLang, ok := IsValidISO639(languageCode)
-	if !ok {
-		return "", fmt.Errorf("\"%s\" isn't a ISO-639 language code", languageCode)
-	}
-
-	// Get the script for the language
-	scripts, exists := Lang2Scripts[stdLang]
-	if !exists {
-		return "", fmt.Errorf("no script mapping found for language code %s", stdLang)
-	}
-	if len(scripts) == 0 {
-		return "", fmt.Errorf("empty script list for language code %s", stdLang)
-	}
-
-	// Get the primary script (first in the list)
-	sourceScript := Script(scripts[0])
-
-	// Get the romanization scheme for the script
-	romanScheme, exists := Script2RomanScheme[string(sourceScript)]
-	if !exists {
-		return "", fmt.Errorf("no romanization scheme found for script %s", sourceScript)
-	}
-
-	result, err := Translit(text, sourceScript, Script(romanScheme), DefaultOptions())
-	if err != nil {
-		return "", fmt.Errorf("romanization failed: %w", err)
-	}
-
-	return result, nil
+	return RomanWithOptions(text, languageCode, DefaultOptions())
 }
 
 // RomanizeWithOptions is like Romanize but allows customization of the transliteration options
 func RomanWithOptions(text, languageCode string, opts TranslitOptions) (string, error) {
-	// Validate and standardize the language code
 	stdLang, ok := IsValidISO639(languageCode)
 	if !ok {
 		return "", fmt.Errorf("\"%s\" isn't a ISO-639 language code", languageCode)
 	}
-
-	// Get the script for the language
-	scripts, exists := Lang2Scripts[stdLang]
-	if !exists {
-		return "", fmt.Errorf("no script mapping found for language code %s", stdLang)
-	}
-	if len(scripts) == 0 {
-		return "", fmt.Errorf("empty script list for language code %s", stdLang)
-	}
-
-	// Get the primary script (first in the list)
-	sourceScript := Script(scripts[0])
+	sourceScript, _ := DefaultScriptFor(stdLang)
 
 	// Get the romanization scheme for the script
 	romanScheme, exists := Script2RomanScheme[string(sourceScript)]
@@ -179,12 +137,32 @@ func RomanWithOptions(text, languageCode string, opts TranslitOptions) (string, 
 	}
 
 	// Use the existing Transliterate function with provided options
-	result, err := Translit(text, sourceScript, Script(romanScheme), opts)
+	result, err := TranslitWithOptions(text, sourceScript, Script(romanScheme), opts)
 	if err != nil {
 		return "", fmt.Errorf("romanization failed: %w", err)
 	}
 
 	return result, nil
+}
+
+// Get the primary script of a given language
+func DefaultScriptFor(languageCode string) (Script, error) {
+	stdLang, ok := IsValidISO639(languageCode)
+	if !ok {
+		return "", fmt.Errorf("\"%s\" isn't a ISO-639 language code", languageCode)
+	}
+
+	// Get the script for the language
+	scripts, exists := Lang2Scripts[stdLang]
+	if !exists {
+		return "", fmt.Errorf("no script mapping found for language code %s", stdLang)
+	}
+	if len(scripts) == 0 {
+		return "", fmt.Errorf("empty script list for language code %s", stdLang)
+	}
+
+	// Get the primary script (first in the list)
+	return Script(scripts[0]), nil
 }
 
 func IsValidISO639(lang string) (stdLang string, ok bool) {
