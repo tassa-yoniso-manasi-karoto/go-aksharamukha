@@ -3,6 +3,7 @@ package aksharamukha
 import (
 	"time"
 	"sync"
+	"context"
 	"fmt"
 
 	"github.com/rs/zerolog"
@@ -25,6 +26,9 @@ var (
 	instance *docker
 	once sync.Once
 	mu sync.Mutex
+	Ctx = context.TODO()
+	QueryTimeout = 5 * time.Minute
+	DockerLogLevel = zerolog.Disabled
 )
 
 type docker struct {
@@ -43,7 +47,7 @@ func newDocker() (*docker, error) {
 			Prefix:      projectName,
 			ShowService: true,
 			ShowType:    true,
-			LogLevel:    zerolog.Disabled, //InfoLevel
+			LogLevel:    DockerLogLevel,
 			InitMessage: "Listening at: http://0.0.0.0:8085",
 		}
 		
@@ -55,9 +59,14 @@ func newDocker() (*docker, error) {
 			RemoteRepo:      remote,
 			RequiredServices: []string{"front", "back", "fonts"},
 			LogConsumer:     logger,
+			Timeout:	  dockerutil.Timeout{
+				Create:		60 * time.Second,
+				Recreate:	10 * time.Minute,
+				Start:		60 * time.Second,
+			},
 		}
 
-		manager, err := dockerutil.NewDockerManager(cfg)
+		manager, err := dockerutil.NewDockerManager(Ctx, cfg)
 		if err != nil {
 			initErr = err
 			return
@@ -130,12 +139,6 @@ func Close() error {
 		return instance.docker.Close()
 	}
 	return nil
-}
-
-func SetLogLevel(level zerolog.Level) {
-	if instance != nil {
-		instance.logger.SetLogLevel(level)
-	}
 }
 
 func placeholder3456543() {
