@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 	
 	"github.com/gookit/color"
 	"github.com/k0kubun/pp"
@@ -81,13 +80,14 @@ func TranslitWithOptions(text string, from, to Script, opts TranslitOptions) (st
 		params.Set("postoptions", strings.Join(opts.PostOptions, ","))
 	}
 
-	// Create HTTP client with timeout
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-	}
+	client := &http.Client{}
 
-	// Make the request
-	resp, err := client.Get(fmt.Sprintf("%s?%s", baseURL, params.Encode()))
+	req, err := http.NewRequestWithContext(Ctx, "GET", fmt.Sprintf("%s?%s", baseURL, params.Encode()), nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %v", err)
+	}
+	
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to make request (THIS ERROR MAY BE CAUSED BY AN ACTIVE VPN): %w", err)
 	}
