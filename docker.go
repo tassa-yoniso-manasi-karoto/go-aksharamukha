@@ -28,7 +28,7 @@ var (
 	mu sync.Mutex
 	Ctx = context.TODO()
 	QueryTimeout = 5 * time.Minute
-	DockerLogLevel = zerolog.Disabled
+	DockerLogLevel = zerolog.TraceLevel
 )
 
 type docker struct {
