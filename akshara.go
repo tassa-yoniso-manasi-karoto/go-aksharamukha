@@ -84,7 +84,7 @@ func TranslitWithOptions(text string, from, to Script, opts TranslitOptions) (st
 
 	req, err := http.NewRequestWithContext(Ctx, "GET", fmt.Sprintf("%s?%s", baseURL, params.Encode()), nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %v", err)
+		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 	
 	resp, err := client.Do(req)
@@ -106,7 +106,7 @@ func TranslitWithOptions(text string, from, to Script, opts TranslitOptions) (st
 
 	// Return the response as is, since it's plain text
 	result := string(body)
-	result = strings.TrimSpace(result) // Remove any leading/trailing whitespace
+	result = strings.TrimSpace(result) // Remove any leading/trailing whitespace // FIXME
 
 	if result == "" {
 		return "", fmt.Errorf("empty response received")
