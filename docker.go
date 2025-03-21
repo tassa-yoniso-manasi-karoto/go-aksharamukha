@@ -22,123 +22,242 @@ const (
 )
 
 var (
-	QueryTO = 1 * time.Hour
-	instance *docker
-	once sync.Once
-	mu sync.Mutex
-	Ctx = context.TODO()
-	QueryTimeout = 5 * time.Minute
-	DockerLogLevel = zerolog.TraceLevel
+	DefaultQueryTimeout = 5 * time.Minute
+	DefaultDockerLogLevel = zerolog.TraceLevel
 )
 
-type docker struct {
-	docker *dockerutil.DockerManager
-	logger *dockerutil.ContainerLogConsumer
+// AksharamukhaManager handles Docker lifecycle for Aksharamukha project
+type AksharamukhaManager struct {
+	docker       *dockerutil.DockerManager
+	logger       *dockerutil.ContainerLogConsumer
+	projectName  string
+	frontContainer string
+	backContainer  string
+	fontsContainer string
+	QueryTimeout time.Duration
 }
 
-// NewDocker creates or returns an existing docker instance
-func newDocker() (*docker, error) {
-	mu.Lock()
-	defer mu.Unlock()
-	
-	var initErr error
-	once.Do(func() {
-		logConfig := dockerutil.LogConfig{
-			Prefix:      projectName,
-			ShowService: true,
-			ShowType:    true,
-			LogLevel:    DockerLogLevel,
-			InitMessage: "Listening at: http://0.0.0.0:8085",
-		}
-		
-		logger := dockerutil.NewContainerLogConsumer(logConfig)
+// ManagerOption defines function signature for options to configure AksharamukhaManager
+type ManagerOption func(*AksharamukhaManager)
 
-		cfg := dockerutil.Config{
-			ProjectName:      projectName,
-			ComposeFile:     "docker-compose.yml",
-			RemoteRepo:      remote,
-			RequiredServices: []string{"front", "back", "fonts"},
-			LogConsumer:     logger,
-			Timeout:	  dockerutil.Timeout{
-				Create:		60 * time.Second,
-				Recreate:	10 * time.Minute,
-				Start:		60 * time.Second,
-			},
-		}
-
-		manager, err := dockerutil.NewDockerManager(Ctx, cfg)
-		if err != nil {
-			initErr = err
-			return
-		}
-
-		instance = &docker{
-			docker: manager,
-			logger: logger,
-		}
-	})
-
-	if initErr != nil {
-		return nil, initErr
+// WithQueryTimeout sets a custom query timeout
+func WithQueryTimeout(timeout time.Duration) ManagerOption {
+	return func(am *AksharamukhaManager) {
+		am.QueryTimeout = timeout
 	}
-	return instance, nil
+}
+
+// WithProjectName sets a custom project name for multiple instances
+func WithProjectName(name string) ManagerOption {
+	return func(am *AksharamukhaManager) {
+		am.projectName = name
+		// Default container names are derived from project name
+		am.frontContainer = name + "-front-1"
+		am.backContainer = name + "-back-1"
+		am.fontsContainer = name + "-fonts-1"
+	}
+}
+
+// WithContainerNames overrides the default container names
+func WithContainerNames(front, back, fonts string) ManagerOption {
+	return func(am *AksharamukhaManager) {
+		am.frontContainer = front
+		am.backContainer = back
+		am.fontsContainer = fonts
+	}
+}
+
+// NewManager creates a new Aksharamukha manager instance
+func NewManager(ctx context.Context, opts ...ManagerOption) (*AksharamukhaManager, error) {
+	manager := &AksharamukhaManager{
+		projectName: projectName,
+		frontContainer: containerFront,
+		backContainer: containerBack,
+		fontsContainer: containerFonts,
+		QueryTimeout: DefaultQueryTimeout,
+	}
+	
+	// Apply options
+	for _, opt := range opts {
+		opt(manager)
+	}
+	
+	logConfig := dockerutil.LogConfig{
+		Prefix:      manager.projectName,
+		ShowService: true,
+		ShowType:    true,
+		LogLevel:    DefaultDockerLogLevel,
+		InitMessage: "Listening at: http://0.0.0.0:8085",
+	}
+
+	logger := dockerutil.NewContainerLogConsumer(logConfig)
+
+	cfg := dockerutil.Config{
+		ProjectName:      manager.projectName,
+		ComposeFile:      "docker-compose.yml",
+		RemoteRepo:       remote,
+		RequiredServices: []string{"front", "back", "fonts"},
+		LogConsumer:      logger,
+		Timeout: dockerutil.Timeout{
+			Create:   60 * time.Second,
+			Recreate: 10 * time.Minute,
+			Start:    60 * time.Second,
+		},
+	}
+
+	dockerManager, err := dockerutil.NewDockerManager(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Docker manager: %w", err)
+	}
+
+	manager.docker = dockerManager
+	manager.logger = logger
+	
+	return manager, nil
 }
 
 // Init initializes the docker service
-func Init() error {
-	if instance == nil {
-		if _, err := newDocker(); err != nil {
-			return err
-		}
-	}
-	return instance.docker.Init()
+func (am *AksharamukhaManager) Init(ctx context.Context) error {
+	return am.docker.Init()
 }
-
 
 // InitQuiet initializes the docker service with reduced logging
-func InitQuiet() error {
-	if instance == nil {
-		if _, err := newDocker(); err != nil {
-			return err
-		}
-	}
-	return instance.docker.InitQuiet()
+func (am *AksharamukhaManager) InitQuiet(ctx context.Context) error {
+	return am.docker.InitQuiet()
 }
-// InitRecreate remove existing containers (if noCache is true, downloads the lastest
-// version of dependencies ignoring cache), then builds and up the containers
-func InitRecreate(noCache bool) error {
-	if instance == nil {
-		if _, err := newDocker(); err != nil {
-			return err
-		}
-	}
+
+// InitRecreate remove existing containers then builds and up the containers
+func (am *AksharamukhaManager) InitRecreate(ctx context.Context, noCache bool) error {
 	if noCache {
-		return instance.docker.InitRecreateNoCache()
+		return am.docker.InitRecreateNoCache()
 	}
-	return instance.docker.InitRecreate()
+	return am.docker.InitRecreate()
 }
 
+// MustInit initializes the docker service and panics on error
+func (am *AksharamukhaManager) MustInit(ctx context.Context) {
+	if err := am.docker.InitRecreate(); err != nil {
+		panic(err)
+	}
+}
+
+// Stop stops the docker service
+func (am *AksharamukhaManager) Stop(ctx context.Context) error {
+	return am.docker.Stop()
+}
+
+// Close implements io.Closer
+func (am *AksharamukhaManager) Close() error {
+	am.logger.Close()
+	return am.docker.Close()
+}
+
+// GetBaseURL returns the base URL for API requests
+func (am *AksharamukhaManager) GetBaseURL() string {
+	return "http://localhost:8085/api/public"
+}
+
+// For backward compatibility with existing code
+var (
+	instance *AksharamukhaManager
+	once sync.Once
+	mu sync.Mutex
+)
+
+// InitWithContext initializes the default docker service with a context
+func InitWithContext(ctx context.Context) error {
+	mgr, err := getOrCreateDefaultManager(ctx)
+	if err != nil {
+		return err
+	}
+	return mgr.Init(ctx)
+}
+
+// Init initializes the default docker service (backward compatibility)
+func Init() error {
+	return InitWithContext(context.Background())
+}
+
+// InitQuietWithContext initializes the docker service with reduced logging and a context
+func InitQuietWithContext(ctx context.Context) error {
+	mgr, err := getOrCreateDefaultManager(ctx)
+	if err != nil {
+		return err
+	}
+	return mgr.InitQuiet(ctx)
+}
+
+// InitQuiet initializes the docker service with reduced logging (backward compatibility)
+func InitQuiet() error {
+	return InitQuietWithContext(context.Background())
+}
+
+// InitRecreateWithContext removes existing containers with a context
+func InitRecreateWithContext(ctx context.Context, noCache bool) error {
+	mgr, err := getOrCreateDefaultManager(ctx)
+	if err != nil {
+		return err
+	}
+	return mgr.InitRecreate(ctx, noCache)
+}
+
+// InitRecreate removes existing containers (backward compatibility)
+func InitRecreate(noCache bool) error {
+	return InitRecreateWithContext(context.Background(), noCache)
+}
+
+// MustInitWithContext initializes the docker service with a context (panics on error)
+func MustInitWithContext(ctx context.Context) {
+	mgr, _ := getOrCreateDefaultManager(ctx)
+	mgr.MustInit(ctx)
+}
+
+// MustInit initializes the docker service (backward compatibility)
 func MustInit() {
-	if instance == nil {
-		newDocker()
-	}
-	instance.docker.InitRecreate()
+	MustInitWithContext(context.Background())
 }
 
-
-func Stop() error {
+// StopWithContext stops the docker service with a context
+func StopWithContext(ctx context.Context) error {
 	if instance == nil {
 		return fmt.Errorf("docker instance not initialized")
 	}
-	return instance.docker.Stop()
+	return instance.Stop(ctx)
 }
 
+// Stop stops the docker service (backward compatibility)
+func Stop() error {
+	return StopWithContext(context.Background())
+}
+
+// Close implements io.Closer (backward compatibility)
 func Close() error {
 	if instance != nil {
 		instance.logger.Close()
 		return instance.docker.Close()
 	}
 	return nil
+}
+
+// getOrCreateDefaultManager returns or creates the default manager instance
+func getOrCreateDefaultManager(ctx context.Context) (*AksharamukhaManager, error) {
+	mu.Lock()
+	defer mu.Unlock()
+	
+	var initErr error
+	once.Do(func() {
+		mgr, err := NewManager(ctx)
+		if err != nil {
+			initErr = err
+			return
+		}
+		instance = mgr
+	})
+	
+	if initErr != nil {
+		return nil, initErr
+	}
+	return instance, nil
 }
 
 func placeholder3456543() {

@@ -1,4 +1,3 @@
-
 package aksharamukha
 
 import (
@@ -7,10 +6,13 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"context"
 	
 	"github.com/gookit/color"
 	"github.com/k0kubun/pp"
 	iso "github.com/barbashov/iso639-3"
+	
+	"github.com/tassa-yoniso-manasi-karoto/dockerutil"
 )
 
 // TranslitOptions holds configuration for the transliteration process
@@ -26,19 +28,29 @@ type TranslitOptions struct {
 // DefaultOptions returns the default transliteration options
 func DefaultOptions() TranslitOptions {
 	return TranslitOptions{}
-		//Nativize: true,
-	//}
 }
 
-// Transliterate converts text from one script to another
-func Translit(text string, from, to Script) (string, error) {
-	return TranslitWithOptions(text, from, to, DefaultOptions())
-}
-
-func TranslitWithOptions(text string, from, to Script, opts TranslitOptions) (string, error) {
-	if instance == nil {
-		return "", fmt.Errorf("docker instance not initialized")
+// TranslitWithContext converts text from one script to another with context support
+func TranslitWithContext(ctx context.Context, text string, from, to Script, opts TranslitOptions) (string, error) {
+	mgr, err := getOrCreateDefaultManager(ctx)
+	if err != nil {
+		return "", err
 	}
+	return mgr.Translit(ctx, text, from, to, opts)
+}
+
+// Translit is the backward compatible version that uses a default context
+func Translit(text string, from, to Script) (string, error) {
+	return TranslitWithContext(context.Background(), text, from, to, DefaultOptions())
+}
+
+// TranslitWithOptions is the backward compatible version that uses a default context
+func TranslitWithOptions(text string, from, to Script, opts TranslitOptions) (string, error) {
+	return TranslitWithContext(context.Background(), text, from, to, opts)
+}
+
+// Translit performs transliteration using a specific manager instance
+func (am *AksharamukhaManager) Translit(ctx context.Context, text string, from, to Script, opts TranslitOptions) (string, error) {
 	if text == "" {
 		return "", fmt.Errorf("empty text provided")
 	}
@@ -51,9 +63,8 @@ func TranslitWithOptions(text string, from, to Script, opts TranslitOptions) (st
 		return "", fmt.Errorf("invalid target script: %s", to)
 	}
 
-
 	// Build the query URL
-	baseURL := "http://localhost:8085/api/public"
+	baseURL := am.GetBaseURL()
 	params := url.Values{}
 	
 	// Required parameters
@@ -82,14 +93,16 @@ func TranslitWithOptions(text string, from, to Script, opts TranslitOptions) (st
 
 	client := &http.Client{}
 
-	req, err := http.NewRequestWithContext(Ctx, "GET", fmt.Sprintf("%s?%s", baseURL, params.Encode()), nil)
+	// Create request with context
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s?%s", baseURL, params.Encode()), nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 	
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to make request (THIS ERROR MAY BE CAUSED BY AN ACTIVE VPN): %w", err)
+		return "", fmt.Errorf("failed to make request (THIS ERROR MAY BE CAUSED BY AN ACTIVE VPN, STOP IT AND RESTART %s): %w",
+			dockerutil.DockerBackendName(), err)
 	}
 	defer resp.Body.Close()
 
@@ -106,7 +119,7 @@ func TranslitWithOptions(text string, from, to Script, opts TranslitOptions) (st
 
 	// Return the response as is, since it's plain text
 	result := string(body)
-	result = strings.TrimSpace(result) // Remove any leading/trailing whitespace // FIXME
+	result = strings.TrimSpace(result) // Remove any leading/trailing whitespace
 
 	if result == "" {
 		return "", fmt.Errorf("empty response received")
@@ -115,20 +128,16 @@ func TranslitWithOptions(text string, from, to Script, opts TranslitOptions) (st
 	return result, nil
 }
 
-
-
-// Romanize converts text from a given language to its romanized form
-func Roman(text, languageCode string) (string, error) {
-	return RomanWithOptions(text, languageCode, DefaultOptions())
-}
-
-// RomanizeWithOptions is like Romanize but allows customization of the transliteration options
-func RomanWithOptions(text, languageCode string, opts TranslitOptions) (string, error) {
+// RomanWithContext converts text from a given language to its romanized form with context support
+func RomanWithContext(ctx context.Context, text, languageCode string, opts TranslitOptions) (string, error) {
 	stdLang, ok := IsValidISO639(languageCode)
 	if !ok {
 		return "", fmt.Errorf("\"%s\" isn't a ISO-639 language code", languageCode)
 	}
-	sourceScript, _ := DefaultScriptFor(stdLang)
+	sourceScript, err := DefaultScriptFor(stdLang)
+	if err != nil {
+		return "", err
+	}
 
 	// Get the romanization scheme for the script
 	romanScheme, exists := Script2RomanScheme[string(sourceScript)]
@@ -136,8 +145,8 @@ func RomanWithOptions(text, languageCode string, opts TranslitOptions) (string, 
 		return "", fmt.Errorf("no romanization scheme found for script %s", sourceScript)
 	}
 
-	// Use the existing Transliterate function with provided options
-	result, err := TranslitWithOptions(text, sourceScript, Script(romanScheme), opts)
+	// Use the context-aware transliteration function
+	result, err := TranslitWithContext(ctx, text, sourceScript, Script(romanScheme), opts)
 	if err != nil {
 		return "", fmt.Errorf("romanization failed: %w", err)
 	}
@@ -145,7 +154,17 @@ func RomanWithOptions(text, languageCode string, opts TranslitOptions) (string, 
 	return result, nil
 }
 
-// Get the primary script of a given language
+// Roman is the backward compatible version that uses a default context
+func Roman(text, languageCode string) (string, error) {
+	return RomanWithContext(context.Background(), text, languageCode, DefaultOptions())
+}
+
+// RomanWithOptions is the backward compatible version that uses a default context
+func RomanWithOptions(text, languageCode string, opts TranslitOptions) (string, error) {
+	return RomanWithContext(context.Background(), text, languageCode, opts)
+}
+
+// DefaultScriptFor gets the primary script of a given language
 func DefaultScriptFor(languageCode string) (Script, error) {
 	stdLang, ok := IsValidISO639(languageCode)
 	if !ok {
