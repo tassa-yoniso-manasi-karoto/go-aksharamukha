@@ -160,8 +160,8 @@ func (am *AksharamukhaManager) GetBaseURL() string {
 // For backward compatibility with existing code
 var (
 	instance *AksharamukhaManager
-	once sync.Once
 	mu sync.Mutex
+	instanceClosed bool
 )
 
 // InitWithContext initializes the default docker service with a context
@@ -232,9 +232,15 @@ func Stop() error {
 
 // Close implements io.Closer (backward compatibility)
 func Close() error {
+	mu.Lock()
+	defer mu.Unlock()
+	
 	if instance != nil {
 		instance.logger.Close()
-		return instance.docker.Close()
+		err := instance.docker.Close()
+		// Mark the instance as closed
+		instanceClosed = true
+		return err
 	}
 	return nil
 }
@@ -244,19 +250,16 @@ func getOrCreateDefaultManager(ctx context.Context) (*AksharamukhaManager, error
 	mu.Lock()
 	defer mu.Unlock()
 	
-	var initErr error
-	once.Do(func() {
+	// Create a new instance if it doesn't exist or was previously closed
+	if instance == nil || instanceClosed {
 		mgr, err := NewManager(ctx)
 		if err != nil {
-			initErr = err
-			return
+			return nil, fmt.Errorf("failed to create default manager: %w", err)
 		}
 		instance = mgr
-	})
-	
-	if initErr != nil {
-		return nil, initErr
+		instanceClosed = false
 	}
+	
 	return instance, nil
 }
 
