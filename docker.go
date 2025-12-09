@@ -19,6 +19,11 @@ const (
 	containerFront = "aksharamukha-front-1"
 	containerBack = "aksharamukha-back-1"
 	containerFonts = "aksharamukha-fonts-1"
+
+	// Docker Hub images
+	imageFront = "virtualvinodh/aksharamukha-front"
+	imageBack  = "virtualvinodh/aksharamukha-back"
+	imageFonts = "virtualvinodh/aksharamukha-fonts"
 )
 
 var (
@@ -134,6 +139,21 @@ func (am *AksharamukhaManager) InitRecreate(ctx context.Context, noCache bool) e
 	return am.docker.InitRecreate()
 }
 
+// PullImages pre-pulls all required Docker images with retry logic.
+// This is useful for slow/unreliable connections as it provides better
+// error handling than docker-compose's built-in pull.
+func (am *AksharamukhaManager) PullImages(ctx context.Context) error {
+	images := []string{imageFront, imageBack, imageFonts}
+	opts := dockerutil.DefaultPullOptions()
+
+	for _, img := range images {
+		if err := dockerutil.PullImage(ctx, img, opts); err != nil {
+			return fmt.Errorf("failed to pull image %s: %w", img, err)
+		}
+	}
+	return nil
+}
+
 // MustInit initializes the docker service and panics on error
 func (am *AksharamukhaManager) MustInit(ctx context.Context) {
 	if err := am.docker.InitRecreate(); err != nil {
@@ -204,6 +224,20 @@ func InitRecreateWithContext(ctx context.Context, noCache bool) error {
 // InitRecreate removes existing containers (backward compatibility)
 func InitRecreate(noCache bool) error {
 	return InitRecreateWithContext(context.Background(), noCache)
+}
+
+// PullImagesWithContext pre-pulls all required Docker images with retry logic
+func PullImagesWithContext(ctx context.Context) error {
+	mgr, err := getOrCreateDefaultManager(ctx)
+	if err != nil {
+		return err
+	}
+	return mgr.PullImages(ctx)
+}
+
+// PullImages pre-pulls all required Docker images (backward compatibility)
+func PullImages() error {
+	return PullImagesWithContext(context.Background())
 }
 
 // MustInitWithContext initializes the docker service with a context (panics on error)
