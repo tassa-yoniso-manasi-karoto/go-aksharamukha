@@ -99,7 +99,6 @@ func NewManager(ctx context.Context, opts ...ManagerOption) (*AksharamukhaManage
 
 	cfg := dockerutil.Config{
 		ProjectName:      manager.projectName,
-		ComposeFile:      "docker-compose.yml",
 		RemoteRepo:       remote,
 		RequiredServices: []string{"front", "back", "fonts"},
 		LogConsumer:      logger,
