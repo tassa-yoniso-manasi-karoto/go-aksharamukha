@@ -52,13 +52,14 @@ func ClearDownloadProgressCallback() {
 
 // AksharamukhaManager handles Docker lifecycle for Aksharamukha project
 type AksharamukhaManager struct {
-	docker       *dockerutil.DockerManager
-	logger       *dockerutil.ContainerLogConsumer
-	projectName  string
-	frontContainer string
-	backContainer  string
-	fontsContainer string
-	QueryTimeout time.Duration
+	docker                   *dockerutil.DockerManager
+	logger                   *dockerutil.ContainerLogConsumer
+	projectName              string
+	frontContainer           string
+	backContainer            string
+	fontsContainer           string
+	QueryTimeout             time.Duration
+	downloadProgressCallback func(current, total int64, status string)
 }
 
 // ManagerOption defines function signature for options to configure AksharamukhaManager
@@ -88,6 +89,13 @@ func WithContainerNames(front, back, fonts string) ManagerOption {
 		am.frontContainer = front
 		am.backContainer = back
 		am.fontsContainer = fonts
+	}
+}
+
+// WithDownloadProgressCallback sets a callback for download progress during image pull
+func WithDownloadProgressCallback(cb func(current, total int64, status string)) ManagerOption {
+	return func(am *AksharamukhaManager) {
+		am.downloadProgressCallback = cb
 	}
 }
 
@@ -165,13 +173,16 @@ func (am *AksharamukhaManager) PullImages(ctx context.Context) error {
 
 	opts := dockerutil.DefaultPullOptions()
 
-	// Get callback under lock
-	downloadCallbackMu.Lock()
-	cb := downloadProgressCallback
-	downloadCallbackMu.Unlock()
-
-	if cb != nil {
-		opts.OnProgress = cb
+	// Use manager's callback if set, otherwise fall back to package-level
+	if am.downloadProgressCallback != nil {
+		opts.OnProgress = am.downloadProgressCallback
+	} else {
+		downloadCallbackMu.Lock()
+		cb := downloadProgressCallback
+		downloadCallbackMu.Unlock()
+		if cb != nil {
+			opts.OnProgress = cb
+		}
 	}
 
 	// dockerutil.PullImages handles:
