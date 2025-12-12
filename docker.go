@@ -27,9 +27,28 @@ const (
 )
 
 var (
-	DefaultQueryTimeout = 5 * time.Minute
+	DefaultQueryTimeout   = 5 * time.Minute
 	DefaultDockerLogLevel = zerolog.TraceLevel
+
+	// Package-level download progress callback for image pulls
+	downloadProgressCallback func(current, total int64, status string)
+	downloadCallbackMu       sync.Mutex
 )
+
+// SetDownloadProgressCallback sets the callback for image download progress.
+// This should be called before PullImages/PullImagesWithContext.
+func SetDownloadProgressCallback(cb func(current, total int64, status string)) {
+	downloadCallbackMu.Lock()
+	defer downloadCallbackMu.Unlock()
+	downloadProgressCallback = cb
+}
+
+// ClearDownloadProgressCallback clears the download progress callback.
+func ClearDownloadProgressCallback() {
+	downloadCallbackMu.Lock()
+	defer downloadCallbackMu.Unlock()
+	downloadProgressCallback = nil
+}
 
 // AksharamukhaManager handles Docker lifecycle for Aksharamukha project
 type AksharamukhaManager struct {
@@ -143,14 +162,23 @@ func (am *AksharamukhaManager) InitRecreate(ctx context.Context, noCache bool) e
 // error handling than docker-compose's built-in pull.
 func (am *AksharamukhaManager) PullImages(ctx context.Context) error {
 	images := []string{imageFront, imageBack, imageFonts}
+
 	opts := dockerutil.DefaultPullOptions()
 
-	for _, img := range images {
-		if err := dockerutil.PullImage(ctx, img, opts); err != nil {
-			return fmt.Errorf("failed to pull image %s: %w", img, err)
-		}
+	// Get callback under lock
+	downloadCallbackMu.Lock()
+	cb := downloadProgressCallback
+	downloadCallbackMu.Unlock()
+
+	if cb != nil {
+		opts.OnProgress = cb
 	}
-	return nil
+
+	// dockerutil.PullImages handles:
+	// - Manifest fetching for accurate total size
+	// - Layer deduplication across images
+	// - Unified progress tracking
+	return dockerutil.PullImages(ctx, images, opts)
 }
 
 // MustInit initializes the docker service and panics on error
