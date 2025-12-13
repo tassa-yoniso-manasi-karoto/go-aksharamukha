@@ -1,29 +1,25 @@
 package aksharamukha
 
 import (
-	"time"
-	"sync"
 	"context"
 	"fmt"
+	"sync"
+	"time"
 
-	"github.com/rs/zerolog"
+	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/gookit/color"
 	"github.com/k0kubun/pp"
-	
+	"github.com/rs/zerolog"
+
 	"github.com/tassa-yoniso-manasi-karoto/dockerutil"
 )
 
 const (
-	remote = "https://github.com/virtualvinodh/aksharamukha.git"
-	projectName = "aksharamukha"
-	containerFront = "aksharamukha-front-1"
+	projectName   = "aksharamukha"
 	containerBack = "aksharamukha-back-1"
-	containerFonts = "aksharamukha-fonts-1"
 
-	// Docker Hub images
-	imageFront = "virtualvinodh/aksharamukha-front"
-	imageBack  = "virtualvinodh/aksharamukha-back"
-	imageFonts = "virtualvinodh/aksharamukha-fonts"
+	// Docker Hub image for API backend (front/fonts not needed - web UI only)
+	imageBack = "virtualvinodh/aksharamukha-back"
 )
 
 var (
@@ -55,9 +51,7 @@ type AksharamukhaManager struct {
 	docker                   *dockerutil.DockerManager
 	logger                   *dockerutil.ContainerLogConsumer
 	projectName              string
-	frontContainer           string
 	backContainer            string
-	fontsContainer           string
 	QueryTimeout             time.Duration
 	downloadProgressCallback func(current, total int64, status string)
 }
@@ -76,19 +70,14 @@ func WithQueryTimeout(timeout time.Duration) ManagerOption {
 func WithProjectName(name string) ManagerOption {
 	return func(am *AksharamukhaManager) {
 		am.projectName = name
-		// Default container names are derived from project name
-		am.frontContainer = name + "-front-1"
 		am.backContainer = name + "-back-1"
-		am.fontsContainer = name + "-fonts-1"
 	}
 }
 
-// WithContainerNames overrides the default container names
-func WithContainerNames(front, back, fonts string) ManagerOption {
+// WithContainerName overrides the default container name
+func WithContainerName(name string) ManagerOption {
 	return func(am *AksharamukhaManager) {
-		am.frontContainer = front
-		am.backContainer = back
-		am.fontsContainer = fonts
+		am.backContainer = name
 	}
 }
 
@@ -99,21 +88,41 @@ func WithDownloadProgressCallback(cb func(current, total int64, status string)) 
 	}
 }
 
+// buildComposeProject creates the compose project definition for aksharamukha
+// Only the "back" service is needed - front/fonts are for the web UI
+func buildComposeProject() *types.Project {
+	return &types.Project{
+		Name: projectName,
+		Services: types.Services{
+			"back": {
+				Name:  "back",
+				Image: imageBack,
+				Ports: []types.ServicePortConfig{{
+					Published: "8085",
+					Target:    8085,
+					Protocol:  "tcp",
+				}},
+			},
+		},
+	}
+}
+
 // NewManager creates a new Aksharamukha manager instance
 func NewManager(ctx context.Context, opts ...ManagerOption) (*AksharamukhaManager, error) {
 	manager := &AksharamukhaManager{
-		projectName: projectName,
-		frontContainer: containerFront,
+		projectName:   projectName,
 		backContainer: containerBack,
-		fontsContainer: containerFonts,
-		QueryTimeout: DefaultQueryTimeout,
+		QueryTimeout:  DefaultQueryTimeout,
 	}
-	
+
 	// Apply options
 	for _, opt := range opts {
 		opt(manager)
 	}
-	
+
+	// Build compose project
+	project := buildComposeProject()
+
 	logConfig := dockerutil.LogConfig{
 		Prefix:      manager.projectName,
 		ShowService: true,
@@ -126,14 +135,15 @@ func NewManager(ctx context.Context, opts ...ManagerOption) (*AksharamukhaManage
 
 	cfg := dockerutil.Config{
 		ProjectName:      manager.projectName,
-		RemoteRepo:       remote,
-		RequiredServices: []string{"front", "back", "fonts"},
+		Project:          project,
+		RequiredServices: []string{"back"},
 		LogConsumer:      logger,
 		Timeout: dockerutil.Timeout{
 			Create:   60 * time.Second,
 			Recreate: 10 * time.Minute,
 			Start:    60 * time.Second,
 		},
+		OnPullProgress: manager.downloadProgressCallback,
 	}
 
 	dockerManager, err := dockerutil.NewDockerManager(ctx, cfg)
@@ -143,7 +153,7 @@ func NewManager(ctx context.Context, opts ...ManagerOption) (*AksharamukhaManage
 
 	manager.docker = dockerManager
 	manager.logger = logger
-	
+
 	return manager, nil
 }
 
@@ -169,7 +179,7 @@ func (am *AksharamukhaManager) InitRecreate(ctx context.Context, noCache bool) e
 // This is useful for slow/unreliable connections as it provides better
 // error handling than docker-compose's built-in pull.
 func (am *AksharamukhaManager) PullImages(ctx context.Context) error {
-	images := []string{imageFront, imageBack, imageFonts}
+	images := []string{imageBack}
 
 	opts := dockerutil.DefaultPullOptions()
 
