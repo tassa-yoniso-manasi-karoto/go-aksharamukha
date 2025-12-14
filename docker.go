@@ -91,8 +91,17 @@ func WithDownloadProgressCallback(cb func(current, total int64, status string)) 
 // buildComposeProject creates the compose project definition for aksharamukha
 // Only the "back" service is needed - front/fonts are for the web UI
 func buildComposeProject() *types.Project {
+	// Network name follows Docker Compose convention: {project}_{network}
+	defaultNetworkName := projectName + "_default"
+
 	return &types.Project{
 		Name: projectName,
+		// Default network required for port exposure
+		Networks: types.Networks{
+			"default": types.NetworkConfig{
+				Name: defaultNetworkName,
+			},
+		},
 		Services: types.Services{
 			"back": {
 				Name:  "back",
@@ -101,7 +110,12 @@ func buildComposeProject() *types.Project {
 					Published: "8085",
 					Target:    8085,
 					Protocol:  "tcp",
+					Mode:      "ingress",
 				}},
+				// Attach to default network
+				Networks: map[string]*types.ServiceNetworkConfig{
+					"default": nil,
+				},
 			},
 		},
 	}

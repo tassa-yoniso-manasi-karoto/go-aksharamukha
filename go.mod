@@ -8,7 +8,7 @@ require (
 	github.com/gookit/color v1.5.4
 	github.com/k0kubun/pp v3.0.1+incompatible
 	github.com/rs/zerolog v1.33.0
-	github.com/tassa-yoniso-manasi-karoto/dockerutil v0.0.0-20251213085829-dbc92c54d932
+	github.com/tassa-yoniso-manasi-karoto/dockerutil v0.0.0-20251214042449-2f026c45c028
 )
 
 require (
