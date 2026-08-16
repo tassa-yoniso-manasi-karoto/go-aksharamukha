@@ -17,6 +17,7 @@ import (
 const (
 	projectName   = "aksharamukha"
 	containerBack = "aksharamukha-back-1"
+	internalPort  = 8085
 
 	// Docker Hub image for API backend (front/fonts not needed - web UI only)
 	imageBack = "virtualvinodh/aksharamukha-back"
@@ -52,6 +53,8 @@ type AksharamukhaManager struct {
 	logger                   *dockerutil.ContainerLogConsumer
 	projectName              string
 	backContainer            string
+	containerNameExplicit    bool
+	baseURL                  string
 	QueryTimeout             time.Duration
 	downloadProgressCallback func(current, total int64, status string)
 }
@@ -78,6 +81,7 @@ func WithProjectName(name string) ManagerOption {
 func WithContainerName(name string) ManagerOption {
 	return func(am *AksharamukhaManager) {
 		am.backContainer = name
+		am.containerNameExplicit = true
 	}
 }
 
@@ -90,7 +94,7 @@ func WithDownloadProgressCallback(cb func(current, total int64, status string)) 
 
 // buildComposeProject creates the compose project definition for aksharamukha
 // Only the "back" service is needed - front/fonts are for the web UI
-func buildComposeProject() *types.Project {
+func buildComposeProject(projectName, containerName string) *types.Project {
 	// Network name follows Docker Compose convention: {project}_{network}
 	defaultNetworkName := projectName + "_default"
 
@@ -104,11 +108,12 @@ func buildComposeProject() *types.Project {
 		},
 		Services: types.Services{
 			"back": {
-				Name:  "back",
-				Image: imageBack,
+				Name:          "back",
+				ContainerName: containerName,
+				Image:         imageBack,
 				Ports: []types.ServicePortConfig{{
-					Published: "8085",
-					Target:    8085,
+					Published: "0",
+					Target:    internalPort,
 					Protocol:  "tcp",
 					Mode:      "ingress",
 				}},
@@ -134,8 +139,31 @@ func NewManager(ctx context.Context, opts ...ManagerOption) (*AksharamukhaManage
 		opt(manager)
 	}
 
+	var projectLease *dockerutil.ProjectLease
+	managerReady := false
+	defer func() {
+		if projectLease != nil && !managerReady {
+			_ = projectLease.Release(ctx)
+		}
+	}()
+	if runtime := dockerutil.RuntimeFromContext(ctx); runtime != nil {
+		lease, err := runtime.AcquireProject(ctx, dockerutil.ProjectSpec{
+			BaseName:  manager.projectName,
+			Kind:      "aksharamukha",
+			Lifecycle: dockerutil.LifecycleOwned,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("acquire Aksharamukha project: %w", err)
+		}
+		projectLease = lease
+		manager.projectName = lease.Name()
+		if !manager.containerNameExplicit {
+			manager.backContainer = ""
+		}
+	}
+
 	// Build compose project
-	project := buildComposeProject()
+	project := buildComposeProject(manager.projectName, manager.backContainer)
 
 	logConfig := dockerutil.LogConfig{
 		Prefix:      manager.projectName,
@@ -148,8 +176,8 @@ func NewManager(ctx context.Context, opts ...ManagerOption) (*AksharamukhaManage
 	logger := dockerutil.NewContainerLogConsumer(logConfig)
 
 	cfg := dockerutil.Config{
-		ProjectName:      manager.projectName,
 		Project:          project,
+		ProjectLease:     projectLease,
 		RequiredServices: []string{"back"},
 		LogConsumer:      logger,
 		Timeout: dockerutil.Timeout{
@@ -167,26 +195,54 @@ func NewManager(ctx context.Context, opts ...ManagerOption) (*AksharamukhaManage
 
 	manager.docker = dockerManager
 	manager.logger = logger
+	managerReady = true
 
 	return manager, nil
 }
 
 // Init initializes the docker service
 func (am *AksharamukhaManager) Init(ctx context.Context) error {
-	return am.docker.Init()
+	if err := am.docker.Init(); err != nil {
+		return err
+	}
+	return am.resolveServiceEndpoint(ctx)
 }
 
 // InitQuiet initializes the docker service with reduced logging
 func (am *AksharamukhaManager) InitQuiet(ctx context.Context) error {
-	return am.docker.InitQuiet()
+	if err := am.docker.InitQuiet(); err != nil {
+		return err
+	}
+	return am.resolveServiceEndpoint(ctx)
 }
 
 // InitRecreate remove existing containers then builds and up the containers
 func (am *AksharamukhaManager) InitRecreate(ctx context.Context, noCache bool) error {
 	if noCache {
-		return am.docker.InitRecreateNoCache()
+		if err := am.docker.InitRecreateNoCache(); err != nil {
+			return err
+		}
+	} else if err := am.docker.InitRecreate(); err != nil {
+		return err
 	}
-	return am.docker.InitRecreate()
+	return am.resolveServiceEndpoint(ctx)
+}
+
+func (am *AksharamukhaManager) resolveServiceEndpoint(ctx context.Context) error {
+	containerID, err := am.docker.ContainerID(ctx, "back")
+	if err != nil {
+		return fmt.Errorf("resolve Aksharamukha container: %w", err)
+	}
+	host, port, err := am.docker.PublishedPort(ctx, "back", internalPort)
+	if err != nil {
+		return fmt.Errorf("resolve Aksharamukha service port: %w", err)
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "localhost"
+	}
+	am.backContainer = containerID
+	am.baseURL = fmt.Sprintf("http://%s:%d/api/public", host, port)
+	return nil
 }
 
 // PullImages pre-pulls all required Docker images with retry logic.
@@ -218,25 +274,30 @@ func (am *AksharamukhaManager) PullImages(ctx context.Context) error {
 
 // MustInit initializes the docker service and panics on error
 func (am *AksharamukhaManager) MustInit(ctx context.Context) {
-	if err := am.docker.InitRecreate(); err != nil {
+	if err := am.InitRecreate(ctx, false); err != nil {
 		panic(err)
 	}
 }
 
 // Stop stops the docker service
 func (am *AksharamukhaManager) Stop(ctx context.Context) error {
-	return am.docker.Stop()
+	return am.docker.StopWithContext(ctx)
 }
 
 // Close implements io.Closer
 func (am *AksharamukhaManager) Close() error {
+	return am.CloseWithContext(context.Background())
+}
+
+// CloseWithContext releases the manager's Docker ownership with a context.
+func (am *AksharamukhaManager) CloseWithContext(ctx context.Context) error {
 	am.logger.Close()
-	return am.docker.Close()
+	return am.docker.CloseWithContext(ctx)
 }
 
 // GetBaseURL returns the base URL for API requests
 func (am *AksharamukhaManager) GetBaseURL() string {
-	return "http://localhost:8085/api/public"
+	return am.baseURL
 }
 
 // For backward compatibility with existing code
@@ -333,7 +394,7 @@ func Close() error {
 	
 	if instance != nil {
 		instance.logger.Close()
-		err := instance.docker.Close()
+		err := instance.docker.CloseWithContext(context.Background())
 		// Mark the instance as closed
 		instanceClosed = true
 		return err
