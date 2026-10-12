@@ -11,8 +11,6 @@ import (
 	"github.com/gookit/color"
 	"github.com/k0kubun/pp"
 	iso "github.com/barbashov/iso639-3"
-	
-	"github.com/tassa-yoniso-manasi-karoto/dockerutil"
 )
 
 // TranslitOptions holds configuration for the transliteration process
@@ -64,7 +62,6 @@ func (am *AksharamukhaManager) Translit(ctx context.Context, text string, from, 
 	}
 
 	// Build the query URL
-	baseURL := am.GetBaseURL()
 	params := url.Values{}
 	
 	// Required parameters
@@ -93,28 +90,34 @@ func (am *AksharamukhaManager) Translit(ctx context.Context, text string, from, 
 
 	client := &http.Client{}
 
-	// Create request with context
-	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s?%s", baseURL, params.Encode()), nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
-	}
-	
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to make request (THIS ERROR MAY BE CAUSED BY AN ACTIVE VPN, STOP IT AND RESTART %s): %w",
-			dockerutil.DockerBackendName(), err)
-	}
-	defer resp.Body.Close()
+	var body []byte
+	err := am.call(ctx, func(baseURL string) error {
+		// Create request with context
+		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s?%s", baseURL, params.Encode()), nil)
+		if err != nil {
+			return fmt.Errorf("failed to create request: %w", err)
+		}
 
-	// Check response status
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("API request failed with status %d", resp.StatusCode)
-	}
+		resp, err := client.Do(req)
+		if err != nil {
+			return fmt.Errorf("failed to make request: %w", err)
+		}
+		defer resp.Body.Close()
 
-	// Read the response body
-	body, err := io.ReadAll(resp.Body)
+		// Check response status
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("API request failed with status %d", resp.StatusCode)
+		}
+
+		// Read the response body
+		body, err = io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("failed to read response: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
-		return "", fmt.Errorf("failed to read response: %w", err)
+		return "", err
 	}
 
 	// Return the response as is, since it's plain text
@@ -130,6 +133,15 @@ func (am *AksharamukhaManager) Translit(ctx context.Context, text string, from, 
 
 // RomanWithContext converts text from a given language to its romanized form with context support
 func RomanWithContext(ctx context.Context, text, languageCode string, opts TranslitOptions) (string, error) {
+	mgr, err := getOrCreateDefaultManager(ctx)
+	if err != nil {
+		return "", err
+	}
+	return mgr.Roman(ctx, text, languageCode, opts)
+}
+
+// Roman converts text from a given language to its romanized form using a specific manager instance
+func (am *AksharamukhaManager) Roman(ctx context.Context, text, languageCode string, opts TranslitOptions) (string, error) {
 	stdLang, ok := IsValidISO639(languageCode)
 	if !ok {
 		return "", fmt.Errorf("\"%s\" isn't a ISO-639 language code", languageCode)
@@ -145,8 +157,7 @@ func RomanWithContext(ctx context.Context, text, languageCode string, opts Trans
 		return "", fmt.Errorf("no romanization scheme found for script %s", sourceScript)
 	}
 
-	// Use the context-aware transliteration function
-	result, err := TranslitWithContext(ctx, text, sourceScript, Script(romanScheme), opts)
+	result, err := am.Translit(ctx, text, sourceScript, Script(romanScheme), opts)
 	if err != nil {
 		return "", fmt.Errorf("romanization failed: %w", err)
 	}

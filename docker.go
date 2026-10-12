@@ -2,10 +2,15 @@ package aksharamukha
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"net"
+	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/adrg/xdg"
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/gookit/color"
 	"github.com/k0kubun/pp"
@@ -26,6 +31,9 @@ const (
 var (
 	DefaultQueryTimeout   = 5 * time.Minute
 	DefaultDockerLogLevel = zerolog.TraceLevel
+
+	// Logger for this package
+	Logger = zerolog.Nop()
 
 	// Package-level download progress callback for image pulls
 	downloadProgressCallback func(current, total int64, status string)
@@ -50,11 +58,16 @@ func ClearDownloadProgressCallback() {
 // AksharamukhaManager handles Docker lifecycle for Aksharamukha project
 type AksharamukhaManager struct {
 	docker                   *dockerutil.DockerManager
+	runtime                  *dockerutil.Runtime // the manager's own, when it was made without one; closed with it
 	logger                   *dockerutil.ContainerLogConsumer
 	projectName              string
 	backContainer            string
 	containerNameExplicit    bool
+	endpointMu               sync.RWMutex // guards backContainer, baseURL and resolution, which recovery replaces while calls read them
 	baseURL                  string
+	resolution               int        // counts the resolutions of baseURL, so that calls that failed on the same one recover once
+	recoverMu                sync.Mutex // one call at a time brings the service back
+	closed                   bool       // under recoverMu: a closed manager brings nothing back
 	QueryTimeout             time.Duration
 	downloadProgressCallback func(current, total int64, status string)
 }
@@ -145,21 +158,41 @@ func NewManager(ctx context.Context, opts ...ManagerOption) (*AksharamukhaManage
 		if projectLease != nil && !managerReady {
 			_ = projectLease.Release(ctx)
 		}
+		if manager.runtime != nil && !managerReady {
+			_ = manager.runtime.Close(ctx)
+		}
 	}()
-	if runtime := dockerutil.RuntimeFromContext(ctx); runtime != nil {
-		lease, err := runtime.AcquireProject(ctx, dockerutil.ProjectSpec{
-			BaseName:  manager.projectName,
-			Kind:      "aksharamukha",
-			Lifecycle: dockerutil.LifecycleOwned,
+	runtime := dockerutil.RuntimeFromContext(ctx)
+	if runtime == nil {
+		// Without a runtime, every process shared one unowned project, and the
+		// first to close removed it under the others, whose calls then failed on
+		// its port. A runtime of the manager's own gives it a project that only
+		// it removes, and reaps those that crashed processes left.
+		private, err := dockerutil.NewRuntime(ctx, dockerutil.RuntimeConfig{
+			Application: "go-aksharamukha",
+			RootDir:     filepath.Join(xdg.CacheHome, "go-aksharamukha", "docker"),
 		})
 		if err != nil {
-			return nil, fmt.Errorf("acquire Aksharamukha project: %w", err)
+			return nil, fmt.Errorf("create Aksharamukha Docker runtime: %w", err)
 		}
-		projectLease = lease
-		manager.projectName = lease.Name()
-		if !manager.containerNameExplicit {
-			manager.backContainer = ""
+		if err := private.RecoveryError(); err != nil {
+			Logger.Warn().Err(err).Msg("Removing the containers of crashed processes was deferred")
 		}
+		manager.runtime = private
+		runtime = private
+	}
+	lease, err := runtime.AcquireProject(ctx, dockerutil.ProjectSpec{
+		BaseName:  manager.projectName,
+		Kind:      "aksharamukha",
+		Lifecycle: dockerutil.LifecycleOwned,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("acquire Aksharamukha project: %w", err)
+	}
+	projectLease = lease
+	manager.projectName = lease.Name()
+	if !manager.containerNameExplicit {
+		manager.backContainer = ""
 	}
 
 	// Build compose project
@@ -240,9 +273,76 @@ func (am *AksharamukhaManager) resolveServiceEndpoint(ctx context.Context) error
 	if host == "" || host == "0.0.0.0" || host == "::" {
 		host = "localhost"
 	}
+	am.endpointMu.Lock()
 	am.backContainer = containerID
 	am.baseURL = fmt.Sprintf("http://%s:%d/api/public", host, port)
+	am.resolution++
+	am.endpointMu.Unlock()
 	return nil
+}
+
+// endpoint returns the service's base URL and the resolution it comes from.
+func (am *AksharamukhaManager) endpoint() (baseURL string, resolution int) {
+	am.endpointMu.RLock()
+	defer am.endpointMu.RUnlock()
+	return am.baseURL, am.resolution
+}
+
+// call runs request against the service's base URL. When the service
+// cannot be reached, as when its container was stopped or removed, or
+// Docker restarted, which also gives it a new port, it brings the
+// container back and runs request once more.
+func (am *AksharamukhaManager) call(ctx context.Context, request func(baseURL string) error) error {
+	baseURL, resolution := am.endpoint()
+	err := request(baseURL)
+	if err == nil || !unreachable(err) {
+		return err
+	}
+	if recoverErr := am.recover(ctx, resolution); recoverErr != nil {
+		return fmt.Errorf("%w; bringing the Aksharamukha service back failed: %v", err, recoverErr)
+	}
+	baseURL, _ = am.endpoint()
+	err = request(baseURL)
+	if unreachable(err) {
+		// The container listens again, so something between it and this
+		// host, such as a VPN, keeps the call from it.
+		return fmt.Errorf("the Aksharamukha service is still unreachable after its container restarted (THIS ERROR MAY BE CAUSED BY AN ACTIVE VPN, STOP IT AND RESTART %s): %w",
+			dockerutil.DockerBackendName(), err)
+	}
+	return err
+}
+
+// recover restarts the container and finds its endpoint again, after a
+// call could not reach the service at the endpoint of resolution failed.
+// Calls that failed together recover once: when another one already
+// resolved the endpoint anew, the caller only retries.
+func (am *AksharamukhaManager) recover(ctx context.Context, failed int) error {
+	am.recoverMu.Lock()
+	defer am.recoverMu.Unlock()
+	if am.closed {
+		return errors.New("the manager is closed")
+	}
+	if _, resolution := am.endpoint(); resolution != failed {
+		return nil
+	}
+	Logger.Warn().Str("project", am.projectName).Msg("Aksharamukha service unreachable; restarting its container")
+	if err := am.docker.Restart(ctx, false); err != nil {
+		return err
+	}
+	// The restart goes on even when ctx ends, and so must finding the new
+	// port, or the next call would restart the container again.
+	return am.resolveServiceEndpoint(context.WithoutCancel(ctx))
+}
+
+// unreachable reports whether err means that nothing answered at the
+// service's address, or that the connection ended before an answer,
+// rather than an answer or a timeout.
+func unreachable(err error) bool {
+	var opErr *net.OpError
+	if errors.As(err, &opErr) && opErr.Op == "dial" {
+		return true
+	}
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 // PullImages pre-pulls all required Docker images with retry logic.
@@ -291,13 +391,23 @@ func (am *AksharamukhaManager) Close() error {
 
 // CloseWithContext releases the manager's Docker ownership with a context.
 func (am *AksharamukhaManager) CloseWithContext(ctx context.Context) error {
+	// A call that fails on the removed container must not bring it back.
+	am.recoverMu.Lock()
+	am.closed = true
+	am.recoverMu.Unlock()
+
 	am.logger.Close()
-	return am.docker.CloseWithContext(ctx)
+	err := am.docker.CloseWithContext(ctx)
+	if am.runtime != nil {
+		err = errors.Join(err, am.runtime.Close(ctx))
+	}
+	return err
 }
 
 // GetBaseURL returns the base URL for API requests
 func (am *AksharamukhaManager) GetBaseURL() string {
-	return am.baseURL
+	baseURL, _ := am.endpoint()
+	return baseURL
 }
 
 // For backward compatibility with existing code
@@ -393,8 +503,7 @@ func Close() error {
 	defer mu.Unlock()
 	
 	if instance != nil {
-		instance.logger.Close()
-		err := instance.docker.CloseWithContext(context.Background())
+		err := instance.Close()
 		// Mark the instance as closed
 		instanceClosed = true
 		return err

@@ -3,12 +3,13 @@ module github.com/tassa-yoniso-manasi-karoto/go-aksharamukha
 go 1.26
 
 require (
+	github.com/adrg/xdg v0.5.3
 	github.com/barbashov/iso639-3 v1.0.0
 	github.com/compose-spec/compose-go/v2 v2.10.1
 	github.com/gookit/color v1.6.0
 	github.com/k0kubun/pp v3.0.1+incompatible
 	github.com/rs/zerolog v1.34.0
-	github.com/tassa-yoniso-manasi-karoto/dockerutil v0.0.0-20260816082843-7b61cea3e0a2
+	github.com/tassa-yoniso-manasi-karoto/dockerutil v0.0.0-20261006145505-dd3122cf9875
 )
 
 require (
@@ -16,7 +17,6 @@ require (
 	github.com/DefangLabs/secret-detector v0.0.0-20250811234530-d4b4214cd679 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d // indirect
-	github.com/adrg/xdg v0.5.3 // indirect
 	github.com/buger/goterm v1.0.4 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
